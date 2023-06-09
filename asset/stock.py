@@ -9,13 +9,17 @@ import time
 import threading
 from multiprocessing import Queue
 from sklearn.preprocessing import RobustScaler
+from lib import get_list_mkt_date, get_list_eom_date
+
+
 
 class Stock:
 
     def __init__(self, start_date, end_date=asset.date_today):
         self.start_date = start_date
         self.end_date = end_date
-        self.list_date_eom = pd.date_range(start_date, end_date,freq="M")
+        self.list_date_mkt = get_list_mkt_date(start_date, end_date)
+        self.list_date_eom = get_list_eom_date(self.list_date_mkt)
 
 
     @staticmethod
@@ -53,6 +57,7 @@ class Stock:
 
         df_factor["quantile"] = 0
         df_factor["z_score"] = 0
+        df_factor["val"] = df_factor["val"].astype("float")
         list_date = sorted(df_factor["date"].unique())
         for v_date in tqdm(list_date):
             z_score = self.get_z_score(df_factor.loc[df_factor["date"] == v_date, "val"])
@@ -103,9 +108,10 @@ class Value(Stock):
         for cmp_cd in tqdm(list_cmp_cd):
             df = self.dict_multiple_cmp_cd[cmp_cd]
             df = df[df["item_cd"] == factor_cd]
-            df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
-            df = df.set_index('date')
-            df = df.resample(rule='1M').last().reset_index(drop=False)[["date", "cmp_cd", "multiple"]]
+            df = df[df["date"].isin(self.list_date_eom)].sort_values(["date", "cmp_cd"])[["date", "cmp_cd", "multiple"]]
+            # df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
+            # df = df.set_index('date')
+            # df = df.resample(rule='1M').last().reset_index(drop=False)[["date", "cmp_cd", "multiple"]]
             df = df.rename(columns={"multiple": "val"})[["date", "cmp_cd", "val"]]
 
             df_factor = pd.concat([df_factor, df])
@@ -131,9 +137,10 @@ class Value(Stock):
         for cmp_cd in tqdm(list_cmp_cd):
             df = self.dict_multiple_his_cmp_cd[cmp_cd]
             df = df[df["item_cd"] == factor_cd]
-            df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
-            df = df.set_index('date')
-            df = df.resample(rule='1M').last().reset_index(drop=False)[["date", "cmp_cd", "history_multiple"]]
+            df = df[df["date"].isin(self.list_date_eom)].sort_values(["date", "cmp_cd"])[["date", "cmp_cd", "history_multiple"]]
+            # df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
+            # df = df.set_index('date')
+            # df = df.resample(rule='1M').last().reset_index(drop=False)[["date", "cmp_cd", "history_multiple"]]
             df = df.rename(columns={"history_multiple": "val"})[["date", "cmp_cd", "val"]]
 
             df_factor = pd.concat([df_factor, df])
@@ -159,9 +166,10 @@ class Value(Stock):
         for cmp_cd in tqdm(list_cmp_cd):
             df = self.dict_multiple_his_cmp_cd[cmp_cd]
             df = df[df["item_cd"] == factor_cd]
-            df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
-            df = df.set_index('date')
-            df = df.resample(rule='1M').last().reset_index(drop=False)[["date", "cmp_cd", "upside"]]
+            df = df[df["date"].isin(self.list_date_eom)].sort_values(["date","cmp_cd"])[["date", "cmp_cd", "upside"]]
+            # df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
+            # df = df.set_index('date')
+            # df = df.resample(rule='1M').last().reset_index(drop=False)[["date", "cmp_cd", "upside"]]
             df = df.rename(columns={"upside": "val"})[["date", "cmp_cd", "val"]]
 
             df_factor = pd.concat([df_factor, df])
@@ -330,4 +338,58 @@ class Growth(Stock):
 
         # save data
         with open(r'D:\MyProject\FactorSelection\stock_factor_growth_quantiling.pickle', 'wb') as fw:
+            pickle.dump(df_factor_data, fw)
+
+
+class Size(Stock):
+
+    # 가격 데이터
+    with open(r"D:\MyProject\StockPrice\DictDfStockDaily.pickle", 'rb') as fr:
+        dict_df_stock_daily = pickle.load(fr)
+
+    # factor_list
+    factor_list = {
+        "market_cap": '',
+    }
+
+    def get_size_data(self, factor_nm):
+
+        df_size_data = pd.DataFrame()
+
+        for p_date in tqdm(self.list_date_eom):
+            df_stock_daily = self.dict_df_stock_daily[p_date].reset_index()
+            df_stock_daily = df_stock_daily.rename(
+                columns={df_stock_daily.columns[0]: "date", "StockCode": "cmp_cd", "MarketCap": "val"})
+            df_stock_daily = df_stock_daily[["date", "cmp_cd", "val"]]
+
+            df_size_data = pd.concat([df_size_data, df_stock_daily])
+
+        df_size_data["item_nm"] = factor_nm
+
+        return df_size_data
+
+    def get_factor_data(self, df_factor_data, factor_nm):
+
+        df_factor = df_factor_data[df_factor_data["item_nm"] == factor_nm][["date", "cmp_cd", "val"]].reset_index(
+            drop=True)
+
+        df_factor = self.scoring(df_factor)
+        df_factor["item_nm"] = factor_nm
+        df_factor = df_factor[["date", "cmp_cd", "item_nm", "val", "z_score", "quantile"]]
+
+        return df_factor
+
+    def create_factor_data(self):
+
+        df_factor_data = pd.DataFrame(columns = ["date", "cmp_cd", "item_nm", "val", "z_score", "quantile"])
+
+        factor_nm = list(self.factor_list.keys())[0]
+
+        # size 데이터
+        df_size_data = self.get_size_data(factor_nm)
+
+        df_factor_data = self.get_factor_data(df_size_data, factor_nm)
+
+        # save data
+        with open(r'D:\MyProject\FactorSelection\stock_factor_size_quantiling.pickle', 'wb') as fw:
             pickle.dump(df_factor_data, fw)
