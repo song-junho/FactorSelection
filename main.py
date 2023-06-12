@@ -1,10 +1,10 @@
 from asset import stock
 
-stock_value = stock.Value("2006-01-01", "2023-06-01")
-stock_value.create_factor_data()
+start_date = "2006-01-01"
+end_date   = "2023-06-01"
 
-stock_growth = stock.Growth("2006-01-01", "2023-06-01")
-stock_growth.create_factor_data()
+if __name__ == "__main__":
 
-stock_size = stock.Size("2006-01-01", "2023-06-01")
-stock_size.create_factor_data()
+    stock.Value(start_date, end_date).create_factor_data()
+    stock.Growth(start_date, end_date).create_factor_data()
+    stock.Size(start_date, end_date).create_factor_data()

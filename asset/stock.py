@@ -137,6 +137,7 @@ class Value(Stock):
         for cmp_cd in tqdm(list_cmp_cd):
             df = self.dict_multiple_his_cmp_cd[cmp_cd]
             df = df[df["item_cd"] == factor_cd]
+            df = df[df["value_q"] == 0.5]
             df = df[df["date"].isin(self.list_date_eom)].sort_values(["date", "cmp_cd"])[["date", "cmp_cd", "history_multiple"]]
             # df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
             # df = df.set_index('date')
@@ -166,6 +167,7 @@ class Value(Stock):
         for cmp_cd in tqdm(list_cmp_cd):
             df = self.dict_multiple_his_cmp_cd[cmp_cd]
             df = df[df["item_cd"] == factor_cd]
+            df = df[df["value_q"] == 0.5]
             df = df[df["date"].isin(self.list_date_eom)].sort_values(["date","cmp_cd"])[["date", "cmp_cd", "upside"]]
             # df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
             # df = df.set_index('date')
