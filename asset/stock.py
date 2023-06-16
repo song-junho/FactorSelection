@@ -10,8 +10,8 @@ import threading
 from multiprocessing import Queue
 from sklearn.preprocessing import RobustScaler
 from lib import get_list_mkt_date, get_list_eom_date
-
-
+from concurrent.futures import ThreadPoolExecutor, wait
+from collections import deque
 
 class Stock:
 
@@ -224,7 +224,10 @@ class Growth(Stock):
         "op_yoy": 121500
     }
 
-    def preprocessing(self, item_nm, item_cd, list_cmp_cd, list_date_eom, q):
+    list_q = deque([])
+    _lock = threading.Lock()
+
+    def preprocessing(self, item_nm, item_cd, list_cmp_cd):
 
         df_fin = self.df_fin_q[self.df_fin_q["item_cd"] == item_cd]
         df_fin = df_fin[df_fin["freq"] == item_nm.split("_")[1]]
@@ -249,7 +252,7 @@ class Growth(Stock):
             df_cmp = df_cmp[df_cmp["yymm"] >= 200509]
 
             df_factor = pd.DataFrame()
-            for v_date in list_date_eom:
+            for v_date in self.list_date_eom:
 
                 year = pd.to_datetime(v_date).year
                 month = pd.to_datetime(v_date).month
@@ -282,28 +285,25 @@ class Growth(Stock):
                 df_factor = pd.concat([df_factor, pd.DataFrame([[v_date, cmp_cd, 0, change_pct],
                                                                 [v_date, cmp_cd, 1, cagr_pct],
                                                                 [v_date, cmp_cd, 2, spread]])])
-            q.put(df_factor)
+
+            with self._lock:
+                self.list_q.append(df_factor)
 
     def get_grwoth_data(self,item_nm, item_cd):
-
-        list_thread = []
-        df_growth_data = pd.DataFrame()
-        q = Queue()
 
         n = 500
         list_cmp_cd_t = sorted(self.df_fin_q["cmp_cd"].unique())
         list_cmp_cd_t = [list_cmp_cd_t[i * n:(i + 1) * n] for i in range((len(list_cmp_cd_t) + n - 1) // n)]
 
-        for list_cmp_cd in (list_cmp_cd_t):
-            t = threading.Thread(target=self.preprocessing, args=(item_nm, item_cd, list_cmp_cd, self.list_date_eom, q))
-            t.start()
-            list_thread.append(t)
+        threads = []
+        with ThreadPoolExecutor(max_workers=5) as executor:
 
-        for t in list_thread:
-            t.join()
+            for list_cmp_cd in list_cmp_cd_t:
+                threads.append(executor.submit(self.preprocessing, item_nm, item_cd, list_cmp_cd))
+            wait(threads)
 
-        for i in tqdm(range(0, q.qsize())):
-            df_growth_data = pd.concat([df_growth_data, q.get()])
+        df_growth_data = pd.concat(self.list_q)
+
         df_growth_data.columns = ["date", "cmp_cd", "item_nm", "val"]
 
         return df_growth_data
