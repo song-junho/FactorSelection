@@ -475,7 +475,7 @@ class Quality(Stock):
     def get_raw_data(self,item_nm, item_cd):
 
         n = 50
-        list_cmp_cd_t = sorted(self.df_fin_q["cmp_cd"].unique())[:100]
+        list_cmp_cd_t = sorted(self.df_fin_q["cmp_cd"].unique())
         list_cmp_cd_t = [list_cmp_cd_t[i * n:(i + 1) * n] for i in range((len(list_cmp_cd_t) + n - 1) // n)]
 
         threads = []
