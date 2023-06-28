@@ -5,7 +5,7 @@ import numpy as np
 import asset
 from scipy import stats
 
-import time
+from abc import *
 import threading
 from multiprocessing import Queue
 from sklearn.preprocessing import RobustScaler
@@ -13,7 +13,8 @@ from lib import get_list_mkt_date, get_list_eom_date
 from concurrent.futures import ThreadPoolExecutor, wait
 from collections import deque
 
-class Stock:
+
+class Stock(metaclass=ABCMeta):
 
     def __init__(self, start_date, end_date=asset.date_today):
         self.start_date = start_date
@@ -68,6 +69,10 @@ class Stock:
 
         return df_factor
 
+    @abstractmethod
+    def create_factor_data(self):
+        pass
+
 
 class Value(Stock):
 
@@ -109,9 +114,6 @@ class Value(Stock):
             df = self.dict_multiple_cmp_cd[cmp_cd]
             df = df[df["item_cd"] == factor_cd]
             df = df[df["date"].isin(self.list_date_eom)].sort_values(["date", "cmp_cd"])[["date", "cmp_cd", "multiple"]]
-            # df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
-            # df = df.set_index('date')
-            # df = df.resample(rule='1M').last().reset_index(drop=False)[["date", "cmp_cd", "multiple"]]
             df = df.rename(columns={"multiple": "val"})[["date", "cmp_cd", "val"]]
 
             df_factor = pd.concat([df_factor, df])
@@ -139,9 +141,6 @@ class Value(Stock):
             df = df[df["item_cd"] == factor_cd]
             df = df[df["value_q"] == 0.5]
             df = df[df["date"].isin(self.list_date_eom)].sort_values(["date", "cmp_cd"])[["date", "cmp_cd", "history_multiple"]]
-            # df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
-            # df = df.set_index('date')
-            # df = df.resample(rule='1M').last().reset_index(drop=False)[["date", "cmp_cd", "history_multiple"]]
             df = df.rename(columns={"history_multiple": "val"})[["date", "cmp_cd", "val"]]
 
             df_factor = pd.concat([df_factor, df])
@@ -169,9 +168,6 @@ class Value(Stock):
             df = df[df["item_cd"] == factor_cd]
             df = df[df["value_q"] == 0.5]
             df = df[df["date"].isin(self.list_date_eom)].sort_values(["date","cmp_cd"])[["date", "cmp_cd", "upside"]]
-            # df = df[(df["date"] > self.start_date) & (df["date"] < self.end_date)]
-            # df = df.set_index('date')
-            # df = df.resample(rule='1M').last().reset_index(drop=False)[["date", "cmp_cd", "upside"]]
             df = df.rename(columns={"upside": "val"})[["date", "cmp_cd", "val"]]
 
             df_factor = pd.concat([df_factor, df])
@@ -229,14 +225,16 @@ class Growth(Stock):
 
     def preprocessing(self, item_nm, item_cd, list_cmp_cd):
 
+        target_col = "change_pct"
+
         df_fin = self.df_fin_q[self.df_fin_q["item_cd"] == item_cd]
         df_fin = df_fin[df_fin["freq"] == item_nm.split("_")[1]]
-        df_fin = df_fin[["cmp_cd", "yymm", "change_pct"]]
+        df_fin = df_fin[["cmp_cd", "yymm", target_col]]
 
         # 변화율 스케일링
         scaler = RobustScaler()
-        data = np.array(df_fin["change_pct"]).reshape(-1, 1)
-        df_fin["change_pct"] = scaler.fit_transform(data)
+        data = np.array(df_fin[target_col]).reshape(-1, 1)
+        df_fin[target_col] = scaler.fit_transform(data)
 
         for cmp_cd in tqdm(list_cmp_cd):
 
@@ -244,10 +242,10 @@ class Growth(Stock):
             df_cmp.loc[:, "cagr_pct"] = 0
             df_cmp.loc[:, "spread"] = 0
 
-            df_cmp["cagr_pct"] = df_cmp["change_pct"].rolling(window=12).mean()
+            df_cmp["cagr_pct"] = df_cmp[target_col].rolling(window=12).mean()
             df_cmp.loc[df_cmp["cagr_pct"] == 0, "cagr_pct"] = 0.1
 
-            df_cmp["spread"] = (df_cmp["change_pct"] - df_cmp["cagr_pct"]) / abs(df_cmp["cagr_pct"]) + 1
+            df_cmp["spread"] = (df_cmp[target_col] - df_cmp["cagr_pct"]) / abs(df_cmp["cagr_pct"]) + 1
             df_cmp = df_cmp[~df_cmp["cagr_pct"].isna()]
             df_cmp = df_cmp[df_cmp["yymm"] >= 200509]
 
@@ -274,7 +272,7 @@ class Growth(Stock):
 
                 df = df_cmp.loc[df_cmp["yymm"] == yymm]
 
-                change_pct = df["change_pct"].values[0]
+                target_val = df[target_col].values[0]
                 cagr_pct = df["cagr_pct"].values[0]
                 spread = df["spread"].values[0]
 
@@ -282,14 +280,14 @@ class Growth(Stock):
                 if pd.isna(spread):
                     continue
 
-                df_factor = pd.concat([df_factor, pd.DataFrame([[v_date, cmp_cd, 0, change_pct],
+                df_factor = pd.concat([df_factor, pd.DataFrame([[v_date, cmp_cd, 0, target_val],
                                                                 [v_date, cmp_cd, 1, cagr_pct],
                                                                 [v_date, cmp_cd, 2, spread]])])
 
             with self._lock:
                 self.list_q.append(df_factor)
 
-    def get_grwoth_data(self,item_nm, item_cd):
+    def get_raw_data(self,item_nm, item_cd):
 
         n = 500
         list_cmp_cd_t = sorted(self.df_fin_q["cmp_cd"].unique())
@@ -302,15 +300,16 @@ class Growth(Stock):
                 threads.append(executor.submit(self.preprocessing, item_nm, item_cd, list_cmp_cd))
             wait(threads)
 
-        df_growth_data = pd.concat(self.list_q)
+        df_raw_data = pd.concat(self.list_q)
+        self.list_q = deque([])
 
-        df_growth_data.columns = ["date", "cmp_cd", "item_nm", "val"]
+        df_raw_data.columns = ["date", "cmp_cd", "item_nm", "val"]
 
-        return df_growth_data
+        return df_raw_data
 
-    def get_factor_data(self, df_growth_data, factor_nm):
+    def get_factor_data(self, df_raw_data, factor_nm):
 
-        df_factor = df_growth_data[df_growth_data["item_nm"] == factor_nm][["date", "cmp_cd", "val"]].reset_index(
+        df_factor = df_raw_data[df_raw_data["item_nm"] == factor_nm][["date", "cmp_cd", "val"]].reset_index(
             drop=True)
 
         df_factor = self.scoring(df_factor)
@@ -329,13 +328,13 @@ class Growth(Stock):
             factor_cd = self.factor_list[factor_nm]
 
             # Growth 데이터 생성 및 Factor 명 변경(원본, cagr, spread)
-            df_growth_data = self.get_grwoth_data(factor_nm, factor_cd)
-            df_growth_data["item_nm"] = df_growth_data["item_nm"].replace([0, 1, 2], [factor_nm, factor_nm + "_cagr",
+            df_raw_data = self.get_raw_data(factor_nm, factor_cd)
+            df_raw_data["item_nm"] = df_raw_data["item_nm"].replace([0, 1, 2], [factor_nm, factor_nm + "_cagr",
                                                                                       factor_nm + "_spread"])
-            detail_factor_list = list(df_growth_data["item_nm"].unique())
+            detail_factor_list = list(df_raw_data["item_nm"].unique())
 
             for detail_factor in detail_factor_list:
-                df = self.get_factor_data(df_growth_data, detail_factor)
+                df = self.get_factor_data(df_raw_data, detail_factor)
                 df_factor_data = pd.concat([df_factor_data, df])
 
         # save data
@@ -354,7 +353,7 @@ class Size(Stock):
         "market_cap": '',
     }
 
-    def get_size_data(self, factor_nm):
+    def get_raw_data(self, factor_nm):
 
         df_size_data = pd.DataFrame()
 
@@ -388,10 +387,138 @@ class Size(Stock):
         factor_nm = list(self.factor_list.keys())[0]
 
         # size 데이터
-        df_size_data = self.get_size_data(factor_nm)
+        df_size_data = self.get_raw_data(factor_nm)
 
         df_factor_data = self.get_factor_data(df_size_data, factor_nm)
 
         # save data
         with open(r'D:\MyProject\FactorSelection\stock_factor_size_quantiling.pickle', 'wb') as fw:
+            pickle.dump(df_factor_data, fw)
+
+
+class Quality(Stock):
+
+    # 재무데이터
+    list_item_cd = (211300, 211000, 211500)
+    q = 'SELECT * FROM financial_data.financial_statement_q' + ' where item_cd in {}'.format(list_item_cd) + 'and freq = "yoy"'
+    df_fin_q = pd.read_sql_query(q, asset.conn).sort_values(['cmp_cd', 'yymm', 'fin_typ', 'freq']).drop_duplicates(
+        ["term_typ", "cmp_cd", "item_cd", "yymm", "freq"], keep="last").reset_index(drop=True)
+
+    # factor_list
+    factor_list = {
+        "gpm": 211300,
+        "opm": 211000,
+        "roe": 211500
+    }
+
+    list_q = deque([])
+    _lock = threading.Lock()
+
+    def preprocessing(self, item_nm, item_cd, list_cmp_cd):
+
+        target_col = "val"
+
+        df_fin = self.df_fin_q[self.df_fin_q["item_cd"] == item_cd]
+        df_fin = df_fin[["cmp_cd", "yymm", target_col]]
+
+        for cmp_cd in tqdm(list_cmp_cd):
+
+            df_cmp = df_fin[df_fin["cmp_cd"] == cmp_cd].copy()
+            df_cmp.loc[:, "cagr_pct"] = 0
+            df_cmp.loc[:, "spread"] = 0
+
+            df_cmp["cagr_pct"] = df_cmp[target_col].rolling(window=12).mean()
+            df_cmp.loc[df_cmp["cagr_pct"] == 0, "cagr_pct"] = 0.1
+
+            df_cmp["spread"] = (df_cmp[target_col] - df_cmp["cagr_pct"]) / abs(df_cmp["cagr_pct"]) + 1
+            df_cmp = df_cmp[~df_cmp["cagr_pct"].isna()]
+            df_cmp = df_cmp[df_cmp["yymm"] >= 200509]
+
+            df_factor = pd.DataFrame()
+            for v_date in self.list_date_eom:
+
+                year = pd.to_datetime(v_date).year
+                month = pd.to_datetime(v_date).month
+
+                yymm = 0
+                if month in (3, 4):
+                    yymm = ((year - 1) * 100) + 12
+                elif month in (5, 6, 7):
+                    yymm = (year * 100) + 3
+                elif month in (8, 9, 10):
+                    yymm = (year * 100) + 6
+                elif month in (11, 12):
+                    yymm = (year * 100) + 9
+                elif month in (1, 2):
+                    yymm = ((year - 1) * 100) + 9
+
+                if len(df_cmp.loc[df_cmp["yymm"] == yymm]) == 0:
+                    continue
+
+                df = df_cmp.loc[df_cmp["yymm"] == yymm]
+
+                target_val = df[target_col].values[0]
+                cagr_pct = df["cagr_pct"].values[0]
+                spread = df["spread"].values[0]
+
+                # 스프레드값이 Nan 값인 경우
+                if pd.isna(spread):
+                    continue
+
+                df_factor = pd.concat([df_factor, pd.DataFrame([[v_date, cmp_cd, 0, target_val],
+                                                                [v_date, cmp_cd, 1, cagr_pct],
+                                                                [v_date, cmp_cd, 2, spread]])])
+
+            with self._lock:
+                self.list_q.append(df_factor)
+
+    def get_raw_data(self,item_nm, item_cd):
+
+        n = 50
+        list_cmp_cd_t = sorted(self.df_fin_q["cmp_cd"].unique())[:100]
+        list_cmp_cd_t = [list_cmp_cd_t[i * n:(i + 1) * n] for i in range((len(list_cmp_cd_t) + n - 1) // n)]
+
+        threads = []
+        with ThreadPoolExecutor(max_workers=5) as executor:
+
+            for list_cmp_cd in list_cmp_cd_t:
+                threads.append(executor.submit(self.preprocessing, item_nm, item_cd, list_cmp_cd))
+            wait(threads)
+
+        df_raw_data = pd.concat(self.list_q)
+        self.list_q = deque([])
+
+        df_raw_data.columns = ["date", "cmp_cd", "item_nm", "val"]
+
+        return df_raw_data
+
+    def get_factor_data(self, df_raw_data, factor_nm):
+
+        df_factor = df_raw_data[df_raw_data["item_nm"] == factor_nm][["date", "cmp_cd", "val"]].reset_index(
+            drop=True)
+
+        df_factor = self.scoring(df_factor)
+        df_factor["item_nm"] = factor_nm
+        df_factor = df_factor[["date", "cmp_cd", "item_nm", "val", "z_score", "quantile"]]
+
+        return df_factor
+
+    def create_factor_data(self):
+
+        df_factor_data = pd.DataFrame(columns = ["date", "cmp_cd", "item_nm", "val", "z_score", "quantile"])
+
+        for factor_nm, factor_cd in self.factor_list.items():
+
+            # RAW 데이터 생성 및 Factor 명 변경(원본, cagr, spread)
+            df_raw_data = self.get_raw_data(factor_nm, factor_cd)
+            df_raw_data["item_nm"] = df_raw_data["item_nm"].replace([0, 1, 2], [factor_nm, factor_nm + "_cagr",
+                                                                                      factor_nm + "_spread"])
+            detail_factor_list = list(df_raw_data["item_nm"].unique())
+
+            for detail_factor in detail_factor_list:
+                df = self.get_factor_data(df_raw_data, detail_factor)
+                df_factor_data = pd.concat([df_factor_data, df])
+
+        # save data
+        with open(r'D:\MyProject\FactorSelection\stock_factor_quality_quantiling.pickle', 'wb') as fw:
             pickle.dump(df_factor_data, fw)

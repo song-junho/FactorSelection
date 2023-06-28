@@ -8,3 +8,4 @@ if __name__ == "__main__":
     stock.Value(start_date, end_date).create_factor_data()
     stock.Growth(start_date, end_date).create_factor_data()
     stock.Size(start_date, end_date).create_factor_data()
+    stock.Quality(start_date, end_date).create_factor_data()
