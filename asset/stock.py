@@ -358,6 +358,11 @@ class Size(Stock):
         df_size_data = pd.DataFrame()
 
         for p_date in tqdm(self.list_date_eom):
+
+            # 해당 월말일이 도래하기 전인 경우
+            if p_date > max(self.dict_df_stock_daily.keys()):
+                p_date = max(self.dict_df_stock_daily.keys())
+
             df_stock_daily = self.dict_df_stock_daily[p_date].reset_index()
             df_stock_daily = df_stock_daily.rename(
                 columns={df_stock_daily.columns[0]: "date", "StockCode": "cmp_cd", "MarketCap": "val"})
