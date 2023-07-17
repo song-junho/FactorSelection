@@ -527,3 +527,69 @@ class Quality(Stock):
         # save data
         with open(r'D:\MyProject\FactorSelection\stock_factor_quality_quantiling.pickle', 'wb') as fw:
             pickle.dump(df_factor_data, fw)
+
+
+class Momentum(Stock):
+
+    # 가격 데이터
+    with open(r"D:\MyProject\StockPrice\DictDfStockMonthly.pickle", 'rb') as fr:
+        dict_df_stock_monthly = pickle.load(fr)
+
+    # factor_list
+    factor_list = {
+        "chg_5": '',
+        "chg_20": '',
+        "chg_60": '',
+        "z_score_avg": ''
+    }
+
+    def get_raw_data(self, factor_nm):
+
+        df_raw_data = pd.DataFrame()
+
+        for p_date in tqdm(self.list_date_eom):
+
+            # 해당 월말일이 도래하기 전인 경우
+            if p_date > max(self.dict_df_stock_monthly.keys()):
+                p_date = max(self.dict_df_stock_monthly.keys())
+
+            df_stock_month = self.dict_df_stock_monthly[p_date].reset_index()
+            df_stock_month = df_stock_month.rename(
+                columns={df_stock_month.columns[0]: "date", factor_nm: "val"})
+            df_stock_month = df_stock_month[["date", "cmp_cd", "val"]]
+
+            df_raw_data = pd.concat([df_raw_data, df_stock_month])
+            df_raw_data = df_raw_data.drop_duplicates(["date", "cmp_cd"])
+
+        df_raw_data["item_nm"] = factor_nm
+
+        return df_raw_data
+
+    def get_factor_data(self, df_factor_data, factor_nm):
+
+        df_factor = df_factor_data[df_factor_data["item_nm"] == factor_nm][["date", "cmp_cd", "val"]].reset_index(
+            drop=True)
+
+        df_factor = self.scoring(df_factor)
+        df_factor["item_nm"] = factor_nm
+        df_factor = df_factor[["date", "cmp_cd", "item_nm", "val", "z_score", "quantile"]]
+
+        return df_factor
+
+    def create_factor_data(self):
+
+        df_factor_data = pd.DataFrame(columns=["date", "cmp_cd", "item_nm", "val", "z_score", "quantile"])
+
+        list_factor_nm = list(self.factor_list.keys())
+
+        # 1. 사용할 Factor raw data_frame 생성
+        queue = [self.get_raw_data(factor_nm) for factor_nm in list_factor_nm]
+        df_raw_data = pd.concat(queue)
+
+        # 2. Factor 별 quantile(score) 필드 생성
+        queue = [self.get_factor_data(df_raw_data, factor_nm) for factor_nm in list_factor_nm]
+        df_factor_data = pd.concat(queue)
+
+        # save data
+        with open(r'D:\MyProject\FactorSelection\stock_factor_momentum_quantiling.pickle', 'wb') as fw:
+            pickle.dump(df_factor_data, fw)
