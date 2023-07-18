@@ -537,9 +537,10 @@ class Momentum(Stock):
 
     # factor_list
     factor_list = {
-        "chg_5": '',
-        "chg_20": '',
-        "chg_60": '',
+        "z_score_0to5": '',
+        "z_score_5to20": '',
+        "z_score_20to60": '',
+        "z_score_60to120": '',
         "z_score_avg": ''
     }
 
