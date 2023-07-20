@@ -12,6 +12,7 @@ from sklearn.preprocessing import RobustScaler
 from lib import get_list_mkt_date, get_list_eom_date
 from concurrent.futures import ThreadPoolExecutor, wait
 from collections import deque
+import FinanceDataReader as fdr
 
 
 class Stock(metaclass=ABCMeta):
@@ -372,6 +373,16 @@ class Size(Stock):
 
         df_size_data["item_nm"] = factor_nm
 
+        # size 팩터 내 비주류 종목은 제외한다.
+        df_krx = fdr.StockListing("KRX")
+        df_krx = df_krx[df_krx["Code"].str[-1] == "0"]
+        df_krx = df_krx[df_krx["Market"].isin(["KOSPI", "KOSDAQ"])]
+        df_krx = df_krx[~df_krx["Name"].str.contains("스팩")]
+
+        list_cmp_cd = df_krx["Code"].to_list()
+
+        df_size_data = df_size_data[df_size_data["cmp_cd"].isin(list_cmp_cd)]
+
         return df_size_data
 
     def get_factor_data(self, df_factor_data, factor_nm):
@@ -541,6 +552,7 @@ class Momentum(Stock):
         "z_score_5to20": '',
         "z_score_20to60": '',
         "z_score_60to120": '',
+        "z_score_120to240": '',
         "z_score_avg": ''
     }
 
